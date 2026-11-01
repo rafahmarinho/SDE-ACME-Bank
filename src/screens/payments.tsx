@@ -20,7 +20,15 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Empty, Field, Heading, Status } from "@/components/banking";
-import { feeFor, money, parseMoney } from "@/services/bank";
+import { ScriptName } from "@/components/script-name";
+import {
+  feeFor,
+  limits,
+  money,
+  outgoingToday,
+  parseMoney,
+  withScriptNotice,
+} from "@/services/bank";
 import type { BankContext } from "@/services/use-bank";
 
 export function Transfer({
@@ -46,6 +54,10 @@ export function Transfer({
   const [key, setKey] = useState(() => crypto.randomUUID());
   const selected = state.accounts.find((item) => item.id === account);
   const recipient = state.beneficiaries.find((item) => item.id === beneficiary);
+  const remainingToday = Math.max(
+    0,
+    limits.dailyOutgoing - outgoingToday(state, account),
+  );
   let cents = 0;
   try {
     cents = parseMoney(amount);
@@ -59,6 +71,14 @@ export function Transfer({
       const value = parseMoney(amount);
       if (!selected || !recipient)
         throw new Error("Select an account and beneficiary first.");
+      if (value > limits.internalTransfer)
+        throw new Error(
+          `Transfers are limited to ${money(limits.internalTransfer)} each.`,
+        );
+      if (!scheduled && value > remainingToday)
+        throw new Error(
+          `This would exceed today's limit. You can still send ${money(remainingToday)} from this account.`,
+        );
       if (!scheduled && selected.balance < value + feeFor(value))
         throw new Error(
           "Insufficient funds to cover the amount and transfer fee.",
@@ -110,7 +130,7 @@ export function Transfer({
               <CheckCircle2 size={40} className="positive" />
               <h2>{scheduled ? "You're all set" : "Transfer on its way"}</h2>
               <p className="muted">
-                {money(cents)} to {recipient?.name}
+                {money(cents)} to <ScriptName value={recipient?.name ?? ""} />
                 {scheduled
                   ? ` on ${due}`
                   : ". Estimated settlement: next simulation day."}
@@ -150,7 +170,8 @@ export function Transfer({
                   </option>
                   {state.beneficiaries.map((item) => (
                     <option key={item.id} value={item.id}>
-                      {item.name} · {item.bank}
+                      {withScriptNotice(item.name)} ·{" "}
+                      {withScriptNotice(item.bank)}
                     </option>
                   ))}
                 </select>
@@ -160,7 +181,10 @@ export function Transfer({
                   Add a beneficiary in Beneficiaries before making a payment.
                 </p>
               )}
-              <Field label="Amount" hint="USD · maximum $1,000,000.00">
+              <Field
+                label="Amount"
+                hint={`USD · up to ${money(limits.internalTransfer)} per transfer to ACME accounts, ${money(limits.externalTransfer)} to other banks`}
+              >
                 <div className="amount-input">
                   <span>$</span>
                   <Input
@@ -202,6 +226,10 @@ export function Transfer({
                     {cents ? money(cents + feeFor(cents)) : "$0.00"}
                   </strong>
                 </div>
+                <p className="muted small">
+                  Daily transfer limit {money(limits.dailyOutgoing)} per
+                  account · {money(remainingToday)} left today
+                </p>
               </div>
               <Button
                 className="primary-action"
@@ -248,9 +276,13 @@ export function Transfer({
               </span>
               <div>
                 <strong>
-                  {state.beneficiaries.find(
-                    (item) => item.id === payment.beneficiary,
-                  )?.name || "Removed beneficiary"}
+                  <ScriptName
+                    value={
+                      state.beneficiaries.find(
+                        (item) => item.id === payment.beneficiary,
+                      )?.name || "Removed beneficiary"
+                    }
+                  />
                 </strong>
                 <p className="muted small">
                   Due {payment.due} · fee {money(feeFor(payment.amount))}
@@ -289,9 +321,12 @@ export function Transfer({
           </DialogDescription>
           <div className="review-recipient">
             <UserRound />
-            <strong>{recipient?.name}</strong>
+            <strong>
+              <ScriptName value={recipient?.name ?? ""} />
+            </strong>
             <p className="muted small">
-              {recipient?.bank} · ending {recipient?.account.slice(-4)}
+              <ScriptName value={recipient?.bank ?? ""} /> · ending{" "}
+              {recipient?.account.slice(-4)}
             </p>
           </div>
           <div className="fee-preview">
@@ -383,9 +418,11 @@ export function Beneficiaries({ bank }: { bank: BankContext }) {
                   .join("")}
               </span>
               <div>
-                <strong>{item.name}</strong>
+                <strong>
+                  <ScriptName value={item.name} />
+                </strong>
                 <p className="muted small">
-                  {item.bank} · {item.account}
+                  <ScriptName value={item.bank} /> · {item.account}
                 </p>
               </div>
               <Button

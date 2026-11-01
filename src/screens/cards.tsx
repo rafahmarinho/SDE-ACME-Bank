@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BankCard, Field, Heading, Empty } from "@/components/banking";
-import { money, type Card } from "@/services/bank";
+import { limits, money, type Card } from "@/services/bank";
 import type { BankContext } from "@/services/use-bank";
 
 function CardControls({ card, bank }: { card: Card; bank: BankContext }) {
@@ -53,14 +53,17 @@ function CardControls({ card, bank }: { card: Card; bank: BankContext }) {
         </p>
       </div>
       <hr />
-      <Field label="Monthly spending limit">
+      <Field
+        label="Monthly spending limit"
+        hint={`Choose between ${money(limits.cardMin)} and ${money(limits.cardMax)}.`}
+      >
         <div className="row">
           <input
             type="range"
             aria-label="Monthly spending limit"
-            min="10000"
-            max="1000000"
-            step="10000"
+            min={limits.cardMin}
+            max={limits.cardMax}
+            step={limits.cardStep}
             value={limit}
             onChange={(event) => setLimit(Number(event.target.value))}
           />

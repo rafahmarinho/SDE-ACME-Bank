@@ -653,6 +653,18 @@ button[data-slot="button"] {
   background: #fbecec;
   color: #b85f5f;
 }
+.script-notice {
+  display: inline-flex;
+  margin-left: 6px;
+  vertical-align: middle;
+  font-size: 8px;
+  font-weight: 600;
+  white-space: nowrap;
+  border-radius: 4px;
+  padding: 2px 5px;
+  background: #fbf1df;
+  color: #8a6420;
+}
 .overview-aside {
   border-left: 1px solid var(--border);
   padding-left: 27px;
@@ -1428,6 +1440,66 @@ button[data-slot="button"] {
   font-size: 12px;
   margin-top: 8px;
   color: #788391;
+}
+.privacy-box {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 16px 18px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.privacy-box legend {
+  font-weight: 600;
+  font-size: 13px;
+  padding: 0 6px;
+}
+.privacy-notice {
+  font-size: 12px;
+  color: #556070;
+}
+.privacy-notice details {
+  margin-top: 6px;
+}
+.privacy-notice summary {
+  cursor: pointer;
+  text-decoration: underline;
+}
+.privacy-notice dl {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+.privacy-notice dt {
+  font-weight: 600;
+  color: var(--navy);
+}
+.privacy-notice dd {
+  margin: 0 0 4px;
+  overflow-wrap: anywhere;
+}
+.privacy-choices {
+  display: grid;
+  gap: 10px;
+}
+.consent-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 12px;
+}
+.consent-option input {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.optional-tag {
+  font-style: normal;
+  font-size: 10px;
+  color: #788391;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  margin-left: 4px;
 }
 .bottom-nav,
 .mobile-wordmark,

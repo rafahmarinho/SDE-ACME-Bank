@@ -23,7 +23,15 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Empty, Field, Heading, Status } from "@/components/banking";
-import { money } from "@/services/bank";
+import { ScriptName } from "@/components/script-name";
+import {
+  PrivacyChoices,
+  PrivacyNotice,
+  privacyDecision,
+} from "@/components/privacy-choices";
+import { money, withScriptNotice } from "@/services/bank";
+import { consentGiven, privacyNotice } from "@/services/privacy";
+import { sessionLimits } from "@/services/session-policy";
 import type { BankContext } from "@/services/use-bank";
 import { exportStatement } from "@/services/statements";
 import { demoEnabled } from "@/services/use-bank";
@@ -31,6 +39,7 @@ import { supabase } from "@/database/supabase";
 
 export function Statements({ bank }: { bank: BankContext }) {
   const state = bank.state!;
+  const profile = state.customers.find((item) => item.id === bank.actor!.id);
   const [account, setAccount] = useState(state.accounts[0]?.id || "");
   const [busy, setBusy] = useState("");
   const months = [
@@ -49,15 +58,19 @@ export function Statements({ bank }: { bank: BankContext }) {
     try {
       const selected = state.accounts.find((item) => item.id === account);
       if (!selected) throw new Error("Choose an account.");
+      // A private copy is kept only while the customer consents to the statement archive.
+      const archive =
+        !!supabase && consentGiven(profile?.privacy, "statement-archive");
       await exportStatement(
         selected,
         state.transactions,
         month,
         format,
         bank.actor!.id,
+        archive,
       );
       bank.setNotice(
-        supabase
+        archive
           ? "Statement saved privately and downloaded."
           : "Statement downloaded.",
       );
@@ -142,6 +155,7 @@ export function Statements({ bank }: { bank: BankContext }) {
     </>
   );
 }
+type SessionChoice = (typeof sessionLimits.choices)[number];
 export function ProfileSettings({
   bank,
   settings = false,
@@ -154,9 +168,49 @@ export function ProfileSettings({
   )!;
   const [name, setName] = useState(profile.name);
   const [notifications, setNotifications] = useState(profile.notifications);
+  const [sessionHours, setSessionHours] = useState(
+    (profile.sessionHours ?? sessionLimits.absoluteHours) as SessionChoice,
+  );
+  // Customers manage the notifications consent with their other privacy choices (Settings).
+  const consentManaged = settings && profile.role === "customer";
+  const [privacy, setPrivacy] = useState(() => ({
+    consents: {
+      notifications: profile.privacy?.consents.notifications ?? false,
+      "statement-archive": profile.privacy?.consents["statement-archive"] ?? false,
+    },
+    restricted: [...(profile.privacy?.restricted ?? [])],
+  }));
+  const [newEmail, setNewEmail] = useState("");
+  const [signOutOthers, setSignOutOthers] = useState(true);
   const [password, setPassword] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [passwordBusy, setPasswordBusy] = useState(false);
+  // Supabase Auth confirms the new address (links to the current and the new mailbox); once
+  // confirmed, the server copies it into the bank record, so every store shows the same email.
+  async function changeEmail(event: React.FormEvent) {
+    event.preventDefault();
+    bank.setError("");
+    try {
+      if (!supabase)
+        throw new Error(
+          "Email changes require a Supabase account. Demo profiles have no sign-in email.",
+        );
+      const { error } = await supabase.auth.updateUser(
+        { email: newEmail },
+        { emailRedirectTo: window.location.origin },
+      );
+      if (error)
+        throw new Error("Unable to change the email address. Check it and try again.");
+      setNewEmail("");
+      bank.setNotice(
+        "Confirm the change from the links sent to your current and new email addresses.",
+      );
+    } catch (problem) {
+      bank.setError(
+        problem instanceof Error ? problem.message : "Unable to change the email address.",
+      );
+    }
+  }
   async function changePassword(event: React.FormEvent) {
     event.preventDefault();
     bank.setError("");
@@ -177,6 +231,7 @@ export function ProfileSettings({
         throw new Error(
           "Password update failed. Reauthenticate and try again.",
         );
+      if (signOutOthers) await supabase.auth.signOut({ scope: "others" });
       setPassword("");
       setCurrentPassword("");
       bank.setNotice("Password updated.");
@@ -206,7 +261,12 @@ export function ProfileSettings({
             className="stack"
             onSubmit={(event) => {
               event.preventDefault();
-              void bank.act({ type: "profile", name, notifications });
+              void bank.act({
+                type: "profile",
+                name,
+                notifications: consentManaged ? profile.notifications : notifications,
+                ...(settings ? { sessionHours } : {}),
+              });
             }}
           >
             <Field label="Full name">
@@ -223,14 +283,36 @@ export function ProfileSettings({
             <Field label="Account role">
               <Input value={profile.role} disabled />
             </Field>
-            <label className="check-label">
-              <input
-                type="checkbox"
-                checked={notifications}
-                onChange={(event) => setNotifications(event.target.checked)}
-              />
-              Enable account notifications
-            </label>
+            {!consentManaged && (
+              <label className="check-label">
+                <input
+                  type="checkbox"
+                  checked={notifications}
+                  onChange={(event) => setNotifications(event.target.checked)}
+                />
+                Enable account notifications
+              </label>
+            )}
+            {settings && (
+              <Field
+                label="Sign me out after"
+                hint={`Sessions also lock after ${sessionLimits.idleMinutes} minutes without activity.`}
+              >
+                <select
+                  aria-label="Sign me out after"
+                  value={sessionHours}
+                  onChange={(event) =>
+                    setSessionHours(Number(event.target.value) as SessionChoice)
+                  }
+                >
+                  {sessionLimits.choices.map((hours) => (
+                    <option key={hours} value={hours}>
+                      {hours} {hours === 1 ? "hour" : "hours"}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
             <Button
               className="primary-action"
               type="submit"
@@ -239,6 +321,61 @@ export function ProfileSettings({
               Save changes
             </Button>
           </form>
+          {!settings && profile.role === "customer" && (
+            <>
+              <hr className="my-8" />
+              <h2>Change email address</h2>
+              <form className="stack" onSubmit={changeEmail}>
+                <Field
+                  label="New email address"
+                  hint="A confirmation link goes to both addresses. The change applies everywhere in the bank once confirmed."
+                >
+                  <Input
+                    type="email"
+                    autoComplete="email"
+                    value={newEmail}
+                    onChange={(event) => setNewEmail(event.target.value)}
+                    maxLength={254}
+                    required
+                  />
+                </Field>
+                <Button variant="outline" type="submit">
+                  Change email
+                </Button>
+              </form>
+            </>
+          )}
+          {consentManaged && (
+            <>
+              <hr className="my-8" />
+              <h2>Privacy and consent</h2>
+              <p className="muted small">
+                {profile.privacy
+                  ? `Privacy notice ${profile.privacy.notice} (${profile.privacy.language}) · last decision ${new Date(profile.privacy.decidedAt).toLocaleString("en-US", { timeZone: "UTC" })} UTC`
+                  : `No decision recorded for privacy notice ${privacyNotice.version}.`}
+              </p>
+              <form
+                className="stack"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void bank.act(
+                    { type: "privacy", ...privacyDecision(privacy) },
+                    "Privacy choices saved.",
+                  );
+                }}
+              >
+                <PrivacyChoices
+                  value={privacy}
+                  onChange={setPrivacy}
+                  optionClass="check-label consent-option"
+                />
+                <PrivacyNotice />
+                <Button variant="outline" type="submit" disabled={bank.busy}>
+                  Save privacy choices
+                </Button>
+              </form>
+            </>
+          )}
           {settings && (
             <>
               <hr className="my-8" />
@@ -268,6 +405,14 @@ export function ProfileSettings({
                     required
                   />
                 </Field>
+                <label className="consent-option">
+                  <input
+                    type="checkbox"
+                    checked={signOutOthers}
+                    onChange={(event) => setSignOutOthers(event.target.checked)}
+                  />
+                  Sign out of all other browsers and devices
+                </label>
                 <Button variant="outline" type="submit" disabled={passwordBusy}>
                   Update password
                 </Button>
@@ -370,19 +515,26 @@ export function Support({ bank }: { bank: BankContext }) {
                 <Status value={ticket.status} />
               </div>
               <p className="muted small">
-                {
-                  bank.state!.customers.find((item) => item.id === ticket.owner)
-                    ?.name
-                }{" "}
+                <ScriptName
+                  value={
+                    bank.state!.customers.find(
+                      (item) => item.id === ticket.owner,
+                    )?.name ?? ""
+                  }
+                />{" "}
                 · {ticket.id.slice(0, 8)}
               </p>
               <p className="ticket-message">{ticket.message}</p>
               {ticket.replies.map((reply, index) => (
                 <div className="reply" key={index}>
                   <strong className="small">
-                    {bank.state!.customers.find(
-                      (item) => item.id === reply.author,
-                    )?.name || "Bank staff"}
+                    <ScriptName
+                      value={
+                        bank.state!.customers.find(
+                          (item) => item.id === reply.author,
+                        )?.name || "Bank staff"
+                      }
+                    />
                   </strong>
                   <p>{reply.text}</p>
                   <small className="muted">
@@ -513,17 +665,12 @@ export function Staff({
         <div>
           <Clock3 size={20} />
           <span className="muted">Pending transfers</span>
-          <strong>
-            {
-              state.transactions.filter((item) => item.status === "pending")
-                .length
-            }
-          </strong>
+          <strong>{state.summary?.pendingTransfers ?? 0}</strong>
         </div>
         <div>
           <ActivityIcon size={20} />
           <span className="muted">Total transactions</span>
-          <strong>{state.transactions.length}</strong>
+          <strong>{state.summary?.transactions ?? 0}</strong>
         </div>
         <div>
           <CheckCheck size={20} />
@@ -550,7 +697,7 @@ export function Staff({
               >
                 {customers.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.name}
+                    {withScriptNotice(item.name)}
                   </option>
                 ))}
               </select>
@@ -654,7 +801,9 @@ export function Staff({
                 .map((item) => (
                   <tr key={item.id}>
                     <td>
-                      <strong>{item.name}</strong>
+                      <strong>
+                        <ScriptName value={item.name} />
+                      </strong>
                     </td>
                     <td className="muted">{item.email}</td>
                     <td>

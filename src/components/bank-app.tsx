@@ -33,7 +33,7 @@ import { Overview } from "@/screens/overview";
 import { Activity } from "@/screens/activity";
 import { Beneficiaries, Transfer } from "@/screens/payments";
 import { Cards } from "@/screens/cards";
-import { Auth, Onboarding } from "@/screens/auth";
+import { Auth, Onboarding, PrivacyReview } from "@/screens/auth";
 import { MFA } from "@/screens/mfa";
 import {
   ProfileSettings,
@@ -42,6 +42,7 @@ import {
   Support,
 } from "@/screens/workspace";
 import { seedBank } from "@/services/bank";
+import { privacyCurrent } from "@/services/privacy";
 
 const customerNav = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
@@ -89,10 +90,7 @@ export function BankApp() {
       setPage(
         new URLSearchParams(window.location.search).get("view") || "overview",
       );
-      setRecovering(
-        new URLSearchParams(window.location.search).has("recovery") ||
-          window.location.hash.includes("type=recovery"),
-      );
+      setRecovering(new URLSearchParams(window.location.search).has("recovery"));
     };
     sync();
     window.addEventListener("popstate", sync);
@@ -142,6 +140,8 @@ export function BankApp() {
     );
   function renderScreen() {
     if (customer && !profile!.onboarded) return <Onboarding bank={bank} />;
+    if (customer && !privacyCurrent(profile!.privacy))
+      return <PrivacyReview bank={bank} />;
     switch (activePage) {
       case "overview":
         return <Overview bank={bank} navigate={navigate} />;
@@ -343,40 +343,42 @@ export function BankApp() {
           <span>More</span>
         </button>
       </nav>
-      <Dialog open={demoOpen} onOpenChange={setDemoOpen}>
-        <DialogContent>
-          <DialogTitle>Demo workspace</DialogTitle>
-          <DialogDescription>
-            Local simulation only. Switch perspectives to inspect customer and
-            staff workflows.
-          </DialogDescription>
-          <div className="stack">
-            {seedBank().customers.map((item) => (
-              <button
-                className={`demo-person ${item.id === bank.actor!.id ? "selected" : ""}`}
-                key={item.id}
-                onClick={() => {
-                  bank.switchDemo(item.id);
-                  setDemoOpen(false);
-                  navigate(item.role === "customer" ? "overview" : "staff");
-                }}
-              >
-                <span className="person-avatar">
-                  {item.name
-                    .split(" ")
-                    .map((part) => part[0])
-                    .join("")}
-                </span>
-                <span>
-                  <strong>{item.name}</strong>
-                  <small className="muted">{item.role}</small>
-                </span>
-                <ChevronDown size={16} className="ml-auto -rotate-90" />
-              </button>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
+      {demoEnabled && (
+        <Dialog open={demoOpen} onOpenChange={setDemoOpen}>
+          <DialogContent>
+            <DialogTitle>Demo workspace</DialogTitle>
+            <DialogDescription>
+              Local simulation only. Switch perspectives to inspect customer and
+              staff workflows.
+            </DialogDescription>
+            <div className="stack">
+              {seedBank().customers.map((item) => (
+                <button
+                  className={`demo-person ${item.id === bank.actor!.id ? "selected" : ""}`}
+                  key={item.id}
+                  onClick={() => {
+                    bank.switchDemo(item.id);
+                    setDemoOpen(false);
+                    navigate(item.role === "customer" ? "overview" : "staff");
+                  }}
+                >
+                  <span className="person-avatar">
+                    {item.name
+                      .split(" ")
+                      .map((part) => part[0])
+                      .join("")}
+                  </span>
+                  <span>
+                    <strong>{item.name}</strong>
+                    <small className="muted">{item.role}</small>
+                  </span>
+                  <ChevronDown size={16} className="ml-auto -rotate-90" />
+                </button>
+              ))}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
       <Dialog open={notificationOpen} onOpenChange={setNotificationOpen}>
         <DialogContent>
           <DialogTitle>Account notifications</DialogTitle>

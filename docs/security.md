@@ -24,11 +24,18 @@ SQL denies client access to the authoritative world. A server-only service key i
 - Private statement object paths and restricted bucket policies; CSV formula neutralization and numeric export regression test.
 - Mandatory hosted TOTP assurance and current-password verification before password change.
 - Neutral login/registration/recovery errors, masked passwords, signup and onboarding consent.
-- HSTS, frame denial, nosniff, restricted permissions, CSP and no framework-powered-by header.
+- HSTS, frame denial, nosniff, restricted permissions, per-request nonce CSP with violation reporting and no framework-powered-by header.
+- Versioned privacy notice; consent recorded server-side (items, notice version, language, verified identity, time) before personal data is collected, withdrawable in Settings and enforced before processing (notification feed, Storage policy for statement copies); restriction of simulations per customer; a new notice version requires a new decision (`src/services/privacy.ts`, `supabase/migrations/004_privacy.sql`).
+- Email changes confirmed by Supabase Auth and propagated to the bank record by trigger and by the API; duplicate records removed and duplicate beneficiaries refused.
+- Request throttling shared by all instances (per user, per client address, direct Storage uploads) with locks that double on repeat; Supabase Auth hooks lock accounts after repeated wrong passwords or TOTP codes (`005_throttling.sql`, `supabase/config.toml`).
+- Session tokens encrypted at rest in the browser (AES-256-GCM, key from `/api/storage-key` held in memory only).
+- The API server uses the least-privilege `bank_api` database role instead of the service key (`006_api_role.sql`, `docs/database-access.md`).
+- `audit_events` is append-only for every role, chained with SHA-256 and verifiable; auditors get read-only reports (`007_audit_protection.sql`).
+- Server start and stop and every read and commit of the bank record are logged on an `activity` channel (IDs, versions, action names; no personal data), next to the `security` channel.
 
 ## Locally Verified
 
-Seven unit/security/export checks and three browser checks cover transfer reservation/idempotency/settlement, insufficient funds, foreign ownership, invalid amounts, role restrictions, reset UUID preservation, mass assignment, card freezing, scheduling, CSV formulas, reload persistence, both export formats, mobile width and customer navigation.
+`pnpm test` (61 unit and security checks) and `pnpm test:e2e` (10 browser checks in local demo mode) cover transfer reservation/idempotency/settlement, insufficient funds, foreign ownership, invalid amounts, role restrictions, reset UUID preservation, mass assignment, card freezing, scheduling, CSV formulas, reload persistence, both export formats, mobile width, customer navigation, sessions, headers, request limits, throttling, privacy consent and withdrawal, encrypted session storage and the database grants of the API role.
 
 These checks are not a penetration test or hosted-auth/RLS integration test. Production build and TypeScript/lint checks are separate quality gates, not proof of compliance.
 
@@ -36,12 +43,11 @@ These checks are not a penetration test or hosted-auth/RLS integration test. Pro
 
 - Apply and negatively test the SQL migration with real Auth users: RLS, storage ownership, protected roles, CAS conflict and throttling.
 - Verify hosted confirmation/recovery/SMTP/TOTP flows, provider password policy, rate limits and session revocation.
-- Implement enforceable idle/absolute session limits and concurrent-session policy; evaluate browser token storage versus HttpOnly server sessions.
+- Implement a concurrent-session policy.
 - Configure production TLS, cloud identity controls, database network restrictions, encryption at rest, backups, restore drills, monitoring and secret rotation.
-- Establish lawful privacy notices, consent withdrawal, processing restriction, deletion/retention, data localization and incident response.
+- Complete the privacy impact assessment and the record of processing with the privacy officer, legal review of the notice, deletion/retention, data localization and incident response.
 - Complete independent code review, vulnerability scanning, dependency patch review and penetration testing.
-- Replace inline-script CSP exceptions with a nonce policy if required by deployment policy.
 - Add API failure/security-event auditing; current business audit events do not cover all failed authentication/authorization attempts.
 - Replace the singleton JSONB world for a production ledger, add fraud/sanctions screening and least-privilege staff access.
 
-The request body limit is checked after reading text; enforce an upstream body limit as well. Demo localStorage is not encrypted and is appropriate only for public fictional fixture data. Auth tokens use the Supabase browser client, not encrypted browser storage. No production deployment or live Supabase integration was performed.
+The request body limit is checked after reading text; enforce an upstream body limit as well. Demo localStorage is not encrypted and is appropriate only for public fictional fixture data (development builds only). Auth tokens are stored encrypted; PKCE code verifiers, useless without the emailed one-time code, are not. No production deployment or live Supabase integration was performed.

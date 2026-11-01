@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "test:e2e": "playwright test",
-    "seed": "tsx --env-file=.env.local scripts/seed.ts"
+    "seed": "tsx --env-file=.env.local scripts/seed.ts",
+    "api-role-token": "tsx --env-file=.env.local scripts/api-role-token.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

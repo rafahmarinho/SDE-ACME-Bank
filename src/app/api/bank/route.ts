@@ -1,86 +1,87 @@
-import { NextResponse } from "next/server";
+import { authenticate, loadWorld, saveWorld } from "@/database/server";
+import { actionSchema, executeAction, syncEmail } from "@/services/bank";
+import { apiView } from "@/services/api-view";
 import {
-  authenticate,
-  loadWorld,
-  saveWorld,
-  serviceClient,
-} from "@/database/server";
-import { actionSchema, executeAction, visibleState } from "@/services/bank";
-import { ZodError } from "zod";
+  ApiError,
+  activityLog,
+  errorResponse,
+  json,
+  readJson,
+  securityLog,
+} from "@/services/http";
+import { enforcePreferredLength } from "@/services/session-policy";
+import {
+  clientKey,
+  guardedAuthentication,
+  throttle,
+  throttleRules,
+  throttleStore,
+} from "@/services/throttle";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-const headers = { "Cache-Control": "no-store, private" };
-function failure(error: unknown) {
-  const message = error instanceof Error ? error.message : "Request failed.";
-  const unauthorized = message === "Unauthorized";
-  return NextResponse.json(
-    {
-      error: unauthorized
-        ? "Please sign in again."
-        : error instanceof ZodError
-          ? "Invalid request. Check the supplied values."
-          : message,
-    },
-    { status: unauthorized ? 401 : 400, headers },
-  );
-}
+// Upper bound on server time per request (hosting platforms enforce it from the build output).
+export const maxDuration = 10;
 export async function GET(request: Request) {
+  let actorId: string | undefined;
   try {
-    const actor = await authenticate(request);
-    const state = await loadWorld();
-    if (!state.customers.some((item) => item.id === actor.id)) {
-      return NextResponse.json(
-        { error: "Profile is being provisioned. Please retry." },
-        { status: 409, headers },
-      );
-    }
-    return NextResponse.json(
-      { state: visibleState(state, actor), actor },
-      { headers },
+    const store = await throttleStore();
+    const { actor, since, email } = await guardedAuthentication(store, clientKey(request), () =>
+      authenticate(request),
     );
+    actorId = actor.id;
+    await throttle(store, `read:${actor.id}`, throttleRules.read);
+    let state = await loadWorld();
+    const profile = state.customers.find((item) => item.id === actor.id);
+    if (!profile)
+      throw new ApiError(409, "Profile is being provisioned. Please retry.");
+    enforcePreferredLength(since, profile.sessionHours);
+    // Supabase Auth is the system of record for the email: keep the bank's copy in step.
+    const synced = syncEmail(state, actor.id, email);
+    if (synced && (await saveWorld(synced, state.version))) state = synced;
+    if (actor.role !== "customer")
+      securityLog({ event: "staff-access", route: "GET /api/bank", actor: actor.id, role: actor.role });
+    activityLog({ event: "world-read", route: "GET /api/bank", actor: actor.id, role: actor.role, version: state.version });
+    return json({ state: apiView(state, actor), actor });
   } catch (error) {
-    return failure(error);
+    return errorResponse(error, { route: "GET /api/bank", actor: actorId });
   }
 }
 export async function POST(request: Request) {
+  let actorId: string | undefined;
   try {
     const origin = request.headers.get("origin");
     if (origin && origin !== new URL(request.url).origin)
-      return NextResponse.json(
-        { error: "Origin not allowed." },
-        { status: 403, headers },
-      );
-    if (!request.headers.get("content-type")?.startsWith("application/json"))
-      throw new Error("JSON required.");
-    const raw = await request.text();
-    if (new TextEncoder().encode(raw).length > 8192)
-      throw new Error("Request too large.");
-    const actor = await authenticate(request);
-    const { data: allowed, error: rateError } = await serviceClient().rpc(
-      "consume_request",
-      { actor_id: actor.id },
+      throw new ApiError(403, "Origin not allowed.");
+    const body = await readJson(request);
+    const store = await throttleStore();
+    const { actor, since } = await guardedAuthentication(store, clientKey(request), () =>
+      authenticate(request),
     );
-    if (rateError || !allowed)
-      return NextResponse.json(
-        { error: "Too many requests. Try again in a minute." },
-        { status: 429, headers },
-      );
-    const action = actionSchema.parse(JSON.parse(raw));
+    actorId = actor.id;
+    await throttle(store, `write:${actor.id}`, throttleRules.write);
+    const action = actionSchema.parse(body);
     for (let attempt = 0; attempt < 5; attempt++) {
       const state = await loadWorld();
+      enforcePreferredLength(
+        since,
+        state.customers.find((item) => item.id === actor.id)?.sessionHours,
+      );
       const next = executeAction(state, actor, action);
-      if (await saveWorld(next, state.version))
-        return NextResponse.json(
-          { state: visibleState(next, actor), actor },
-          { headers },
-        );
+      const committed = await saveWorld(next, state.version);
+      // Commit, or compare-and-swap conflict (nothing written; the loop retries on fresh data).
+      activityLog({
+        event: committed ? "world-commit" : "world-conflict",
+        route: "POST /api/bank",
+        actor: actor.id,
+        action: action.type,
+        version: state.version,
+        ...(committed ? { next: next.version } : { attempt: attempt + 1 }),
+      });
+      if (committed) return json({ state: apiView(next, actor), actor });
     }
-    return NextResponse.json(
-      { error: "Another operation is in progress. Please retry." },
-      { status: 409, headers },
-    );
+    throw new ApiError(409, "Another operation is in progress. Please retry.");
   } catch (error) {
-    return failure(error);
+    return errorResponse(error, { route: "POST /api/bank", actor: actorId });
   }
 }

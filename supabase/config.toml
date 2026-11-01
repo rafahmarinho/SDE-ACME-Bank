@@ -1,0 +1,105 @@
+# Supabase settings under version control (Supabase CLI 2.x). `supabase start` applies them to a
+# local stack; `supabase config push` applies them to the linked hosted project. Before pushing to a
+# hosted project, set site_url and additional_redirect_urls to the production origin.
+project_id = "acme-bank"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 17
+
+[db.seed]
+# The bank is seeded by `pnpm seed` (fixture accounts), never by SQL fixtures.
+enabled = false
+
+[storage]
+enabled = true
+file_size_limit = "5MiB"
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000/**"]
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+refresh_token_reuse_interval = 10
+enable_signup = true
+enable_anonymous_sign_ins = false
+enable_manual_linking = false
+minimum_password_length = 12
+password_requirements = "lower_upper_letters_digits_symbols"
+
+# Per client IP address, enforced by Supabase Auth itself (calls straight to Auth included).
+[auth.rate_limit]
+# Emails per hour (sign-up confirmations, recovery links, email changes).
+email_sent = 2
+# Sign-in and sign-up requests per 5 minutes.
+sign_in_sign_ups = 30
+# OTP and link verifications per 5 minutes.
+token_verifications = 30
+# Session refreshes per 5 minutes.
+token_refresh = 150
+
+[auth.email]
+enable_signup = true
+enable_confirmations = true
+# Email changes must be confirmed from both the current and the new address.
+double_confirm_changes = true
+# Password changes need a recent sign-in (the app also re-checks the current password).
+secure_password_change = true
+# At most one recovery or confirmation email per address per minute.
+max_frequency = "60s"
+otp_length = 6
+# Recovery and confirmation links are single use and expire after 15 minutes.
+otp_expiry = 900
+
+# Security notifications: the account owner is told when the password or email changes
+# (the password itself is never included).
+[auth.email.notification.password_changed]
+enabled = true
+subject = "Your ACME Bank password was changed"
+
+[auth.email.notification.email_changed]
+enabled = true
+subject = "Your ACME Bank email address was changed"
+
+[auth.sms]
+enable_signup = false
+
+[auth.mfa]
+max_enrolled_factors = 10
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
+[auth.mfa.phone]
+enroll_enabled = false
+verify_enabled = false
+
+# Supabase Auth ends every session 12 hours after sign-in (the API enforces the same limit).
+[auth.sessions]
+timebox = "12h"
+
+# Account lock-out with exponential back-off for wrong passwords and TOTP codes
+# (supabase/migrations/005_throttling.sql). Hosted projects: Authentication > Hooks.
+[auth.hook.password_verification_attempt]
+enabled = true
+uri = "pg-functions://postgres/public/hook_password_verification_attempt"
+
+[auth.hook.mfa_verification_attempt]
+enabled = true
+uri = "pg-functions://postgres/public/hook_mfa_verification_attempt"
+
+[analytics]
+enabled = false
+
+[edge_runtime]
+enabled = false

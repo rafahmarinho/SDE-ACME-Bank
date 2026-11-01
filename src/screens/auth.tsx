@@ -5,23 +5,29 @@ import { ArrowRight, LockKeyhole, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field } from "@/components/banking";
-import { supabase } from "@/database/supabase";
+import {
+  PrivacyChoices,
+  PrivacyNotice,
+  emptyPrivacyDraft,
+  privacyDecision,
+} from "@/components/privacy-choices";
+import { recoveryVerified, supabase } from "@/database/supabase";
+import { privacyNotice } from "@/services/privacy";
 import { demoEnabled, type BankContext } from "@/services/use-bank";
 
 export function Auth({ bank }: { bank: BankContext }) {
+  // The new-password form appears only after Supabase verified a recovery link (PKCE code
+  // exchange), never because of the URL alone.
   const [mode, setMode] = useState<
     "login" | "signup" | "recovery" | "password"
-  >("login");
+  >(() => (recoveryVerified() ? "password" : "login"));
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     const subscription = supabase?.auth.onAuthStateChange((event) => {
       if (event === "PASSWORD_RECOVERY") setMode("password");
     });
-    const recovery = setTimeout(() => {
-      if (window.location.hash.includes("type=recovery")) setMode("password");
-    }, 0);
-    return () => { clearTimeout(recovery); subscription?.data.subscription.unsubscribe(); };
+    return () => subscription?.data.subscription.unsubscribe();
   }, []);
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -51,6 +57,9 @@ export function Auth({ bank }: { bank: BankContext }) {
           throw new Error(
             "Unable to update password. Request a new recovery link.",
           );
+        // Revokes the refresh tokens of every other session (other browsers and devices).
+        if (form.get("signOutOthers") === "on")
+          await supabase.auth.signOut({ scope: "others" });
         setMessage("Password updated. You can continue to your account.");
         window.history.replaceState(null, "", "/");
         await bank.refresh();
@@ -60,7 +69,14 @@ export function Auth({ bank }: { bank: BankContext }) {
         const { error } = await supabase.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: window.location.origin },
+          options: {
+            emailRedirectTo: window.location.origin,
+            // Stored by Supabase Auth with the account (creation time = time of consent).
+            data: {
+              privacy_notice: privacyNotice.version,
+              privacy_language: privacyNotice.language,
+            },
+          },
         });
         if (error)
           throw new Error(
@@ -176,12 +192,21 @@ export function Auth({ bank }: { bank: BankContext }) {
                 />
               </Field>
             )}
-            {mode === "signup" && (
+            {mode === "password" && (
               <label className="check-label">
-                <input type="checkbox" name="consent" required />
-                I consent to ACME Bank storing my email, profile and simulated
-                banking records to provide this service. No real funds are held.
+                <input type="checkbox" name="signOutOthers" defaultChecked />
+                Sign out of all other browsers and devices
               </label>
+            )}
+            {mode === "signup" && (
+              <>
+                <PrivacyNotice />
+                <label className="check-label">
+                  <input type="checkbox" name="consent" required />
+                  I consent to ACME Bank storing my email, profile and simulated
+                  banking records to provide this service. No real funds are held.
+                </label>
+              </>
             )}
             {mode === "login" && (
               <button
@@ -250,11 +275,17 @@ export function Auth({ bank }: { bank: BankContext }) {
   );
 }
 export function Onboarding({ bank }: { bank: BankContext }) {
+  const [privacy, setPrivacy] = useState(emptyPrivacyDraft);
   async function open(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     await bank.act(
-      { type: "onboard", name: String(form.get("name")), consent: true },
+      {
+        type: "onboard",
+        name: String(form.get("name")),
+        consent: true,
+        privacy: privacyDecision(privacy),
+      },
       "Your simulated account is open.",
     );
   }
@@ -267,7 +298,15 @@ export function Onboarding({ bank }: { bank: BankContext }) {
         Open an ACME simulated checking account and virtual debit card.
       </p>
       <form onSubmit={open} className="stack">
-        <Field label="Full name">
+        <fieldset className="privacy-box">
+          <legend>Your privacy choices</legend>
+          <PrivacyNotice />
+          <PrivacyChoices value={privacy} onChange={setPrivacy} />
+        </fieldset>
+        <Field
+          label="Full name"
+          hint="Required: shown on your accounts and to support staff when you ask for help."
+        >
           <Input name="name" required maxLength={200} />
         </Field>
         <div className="terms">
@@ -286,10 +325,59 @@ export function Onboarding({ bank }: { bank: BankContext }) {
             {bank.error}
           </p>
         )}
-        <Button className="primary-action" type="submit" disabled={bank.busy}>
-          Open simulated account
-          <ArrowRight size={16} />
-        </Button>
+        <div className="row">
+          <Button className="primary-action" type="submit" disabled={bank.busy}>
+            Open simulated account
+            <ArrowRight size={16} />
+          </Button>
+          <Button variant="outline" type="button" onClick={bank.signOut}>
+            Decline and sign out
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+/** Shown when the privacy notice changed (new purpose) or no decision is stored yet. */
+export function PrivacyReview({ bank }: { bank: BankContext }) {
+  const [privacy, setPrivacy] = useState(emptyPrivacyDraft);
+  return (
+    <div className="onboarding">
+      <ShieldCheck size={40} className="positive" />
+      <p className="eyebrow">YOUR PRIVACY</p>
+      <h1>Review how we use your data</h1>
+      <p className="muted">
+        Our privacy notice changed (version {privacyNotice.version}). Confirm
+        your choices before we continue to use your data.
+      </p>
+      <form
+        className="stack"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void bank.act(
+            { type: "privacy", ...privacyDecision(privacy) },
+            "Your privacy choices are saved.",
+          );
+        }}
+      >
+        <fieldset className="privacy-box">
+          <legend>Your privacy choices</legend>
+          <PrivacyNotice />
+          <PrivacyChoices value={privacy} onChange={setPrivacy} />
+        </fieldset>
+        {bank.error && (
+          <p role="alert" className="text-red-700">
+            {bank.error}
+          </p>
+        )}
+        <div className="row">
+          <Button className="primary-action" type="submit" disabled={bank.busy}>
+            Accept and continue
+          </Button>
+          <Button variant="outline" type="button" onClick={bank.signOut}>
+            Decline and sign out
+          </Button>
+        </div>
       </form>
     </div>
   );

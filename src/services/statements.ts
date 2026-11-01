@@ -14,6 +14,8 @@ export async function exportStatement(
   month: string,
   format: "csv" | "pdf",
   owner: string,
+  /** Keep a private copy in storage (only with the customer's statement-archive consent). */
+  archive = false,
 ) {
   const rows = transactions
     .filter(
@@ -69,7 +71,7 @@ export async function exportStatement(
     blob = pdf.output("blob");
   }
   const filename = `acme-${account.number.slice(-4)}-${month}.${format}`;
-  if (supabase) {
+  if (supabase && archive) {
     const path = `${owner}/${crypto.randomUUID()}/${filename}`;
     const { error } = await supabase.storage
       .from("statements")
